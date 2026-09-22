@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CS Bhop — Browser</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#05070a;font-family:Arial,Helvetica,sans-serif;color:#fff}
+canvas{display:block;width:100%;height:100%;background:#111}
+#hud{position:fixed;inset:0;pointer-events:none;text-shadow:0 2px 3px #000}
+#speed{position:absolute;left:24px;bottom:28px;font-size:30px;font-weight:800}
+#timer{position:absolute;top:20px;left:50%;transform:translateX(-50%);font-size:26px;font-weight:800}
+#best{position:absolute;top:55px;left:50%;transform:translateX(-50%);font-size:14px;color:#ddd}
+#cross{position:absolute;left:50%;top:50%;width:18px;height:18px;transform:translate(-50%,-50%)}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff;box-shadow:0 0 2px #000}
+#cross:before{width:2px;height:18px;left:8px;top:0}.cross:after{height:2px;width:18px;left:0;top:8px}
+#hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin-top:65px;background:#000b;padding:12px 18px;border-radius:8px;font-size:14px;text-align:center}
+#menu{position:fixed;inset:0;background:radial-gradient(circle at center,#18202b,#05070a 65%);display:flex;align-items:center;justify-content:center;z-index:5}
+.panel{width:min(520px,90vw);padding:34px;border:1px solid #38414d;background:#0b0f15ee;border-radius:14px;box-shadow:0 20px 80px #000}
+h1{margin:0 0 8px;font-size:42px;letter-spacing:2px}p{color:#b9c0ca;line-height:1.5}
+button{border:0;border-radius:8px;padding:13px 20px;background:#e8a21a;color:#111;font-weight:800;font-size:16px;cursor:pointer}
+button:hover{filter:brightness(1.12)}
+kbd{background:#222b35;border:1px solid #46515e;border-radius:4px;padding:2px 6px}
+#finish{display:none;position:fixed;inset:0;z-index:6;align-items:center;justify-content:center;background:#0009}
+#finish .panel{text-align:center}
+#finish h2{font-size:34px;margin:0 0 8px}
+.small{font-size:13px;color:#9ea7b2}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div id="timer">0.00</div><div id="best"></div>
+  <div id="speed">0</div>
+  <div id="cross"></div>
+  <div id="hint">Click to play · WASD + mouse · SPACE to bhop · R restart · ESC release mouse</div>
+</div>
+<div id="menu">
+  <div class="panel">
+    <h1>CS BHOP</h1>
+    <p>A browser-only bunny-hop trainer inspired by classic CS movement. Build speed with air-strafing and keep your jumps flowing.</p>
+    <p><kbd>W A S D</kbd> move · <kbd>SPACE</kbd> jump · <kbd>R</kbd> restart · <kbd>ESC</kbd> unlock mouse</p>
+    <button id="play">PLAY</button>
+    <p class="small">Everything is contained in this single HTML file. No API, server or external library.</p>
+  </div>
+</div>
+<div id="finish"><div class="panel"><h2 id="finishTitle">FINISHED</h2><p id="finishText"></p><button id="again">RUN AGAIN</button></div></div>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+let W=innerWidth,H=innerHeight,DPR=Math.min(devicePixelRatio||1,2);
+function resize(){W=innerWidth;H=innerHeight;DPR=Math.min(devicePixelRatio||1,2);c.width=W*DPR;c.height=H*DPR;c.style.width=W+'px';c.style.height=H+'px';ctx.setTransform(DPR,0,0,DPR,0,0)}
+addEventListener('resize',resize);resize();
+
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(e.code==='KeyR')reset()});
+addEventListener('keyup',e=>keys[e.code]=false);
+
+let locked=false,yaw=0,pitch=0;
+c.addEventListener('click',()=>{if(!locked)c.requestPointerLock()});
+document.addEventListener('pointerlockchange',()=>{locked=document.pointerLockElement===c;document.getElementById('hint').style.display=locked?'none':'block'});
+document.addEventListener('mousemove',e=>{if(!locked)return;yaw+=e.movementX*.0025;pitch=Math.max(-.9,Math.min(.9,pitch-e.movementY*.0025))});
+
+const player={x:0,z:0,y:1.2,vx:0,vy:0,vz:0,onGround:true};
+const gravity=23,jump=8.3,groundAccel=35,airAccel=7.5,maxGround=7,maxAir=38,friction=5.5;
+let startTime=0,running=false,finished=false,best=Number(localStorage.getItem('bhopBest')||0);
+
+const platforms=[
+{x:-4,z:-10,w:8,d:10,h:0},
+{x:-4,z:-22,w:8,d:8,h:0},
+{x:5,z:-31,w:10,d:9,h:0},
+{x:15,z:-41,w:10,d:9,h:0},
+{x:25,z:-51,w:10,d:9,h:1},
+{x:14,z:-62,w:9,d:9,h:2},
+{x:3,z:-73,w:9,d:9,h:1},
+{x:-8,z:-84,w:10,d:10,h:0},
+{x:-20,z:-96,w:10,d:10,h:0},
+{x:-31,z:-108,w:10,d:10,h:1},
+{x:-18,z:-121,w:10,d:10,h:2},
+{x:-5,z:-134,w:10,d:10,h:2},
+{x:8,z:-147,w:10,d:10,h:1},
+{x:20,z:-160,w:12,d:12,h:0}
+];
+
+function reset(){
+ player.x=0;player.z=0;player.y=1.2;player.vx=0;player.vy=0;player.vz=0;player.onGround=true;
+ yaw=0;pitch=0;running=false;finished=false;
+ document.getElementById('finish').style.display='none';
+ document.getElementById('menu').style.display='flex';
+}
+function start(){document.getElementById('menu').style.display='none';running=true;finished=false;startTime=performance.now();c.requestPointerLock()}
+document.getElementById('play').onclick=start;document.getElementById('again').onclick=()=>{reset();start()};
+
+function nearestGround(x,z){
+ let g=-100;
+ for(const p of platforms){
+  if(x>p.x-p.w/2&&x<p.x+p.w/2&&z>p.z-p.d/2&&z<p.z+p.d/2)g=Math.max(g,p.h);
+ }
+ return g;
+}
+function accel(vx,vz,tx,tz,a,dt){
+ const speed=Math.hypot(vx,vz), dot=vx*tx+vz*tz, adds=a*dt;
+ if(dot>=maxAir)return [vx,vz];
+ const k=Math.min(adds,maxAir-dot);
+ return [vx+tx*k,vz+tz*k];
+}
+function update(dt){
+ if(!running||finished)return;
+ const f=(keys.KeyW?1:0)-(keys.KeyS?1:0), s=(keys.KeyD?1:0)-(keys.KeyA?1:0);
+ let len=Math.hypot(f,s)||1;let fw=f/len,st=s/len;
+ const cy=Math.cos(yaw),sy=Math.sin(yaw);
+ let tx=fw*sy+st*cy,tz=fw*cy-st*sy;
+ if(player.onGround){
+  const sp=Math.hypot(player.vx,player.vz);
+  if(sp>0){const ns=Math.max(0,sp-friction*dt);player.vx*=ns/sp;player.vz*=ns/sp}
+  [player.vx,player.vz]=accel(player.vx,player.vz,tx,tz,groundAccel,dt);
+  const sp2=Math.hypot(player.vx,player.vz);if(sp2>maxGround){player.vx*=maxGround/sp2;player.vz*=maxGround/sp2}
+  if(keys.Space){player.vy=jump;player.onGround=false}
+ }else{
+  if(f||s)[player.vx,player.vz]=accel(player.vx,player.vz,tx,tz,airAccel,dt);
+  player.vy-=gravity*dt;
+ }
+ player.x+=player.vx*dt;player.z+=player.vz*dt;player.y+=player.vy*dt;
+ const g=nearestGround(player.x,player.z);
+ if(player.y<=g+1.2 && player.vy<=0 && g>-99){player.y=g+1.2;player.vy=0;player.onGround=true}else player.onGround=false;
+ if(player.z < -168 && !finished)finish();
+ if(player.y<-10)reset();
+}
+function finish(){
+ finished=true;running=false;
+ const t=(performance.now()-startTime)/1000;
+ if(!best||t<best){best=t;localStorage.setItem('bhopBest',best)}
+ document.getElementById('finishText').textContent='Time: '+t.toFixed(2)+'s · Best: '+best.toFixed(2)+'s';
+ document.getElementById('finish').style.display='flex';
+}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ const sky=ctx.createLinearGradient(0,0,0,H*.65);sky.addColorStop(0,'#0c1420');sky.addColorStop(1,'#32404c');
+ ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ const horizon=H*.52+pitch*H*.22;
+ ctx.fillStyle='#222a2f';ctx.fillRect(0,horizon,W,H-horizon);
+ const fov=Math.PI/3, focal=W/(2*Math.tan(fov/2));
+ const objects=[];
+ for(const p of platforms){
+  const dx=p.x-player.x,dz=p.z-player.z;
+  const ca=Math.cos(-yaw),sa=Math.sin(-yaw);
+  const x=dx*ca-dz*sa,z=dx*sa+dz*ca;
+  if(z<.5||z>120)continue;
+  const sx=W/2+(x/z)*focal, scale=focal/z;
+  const l=sx-p.w*scale/2,r=sx+p.w*scale/2;
+  const top=horizon-(p.h-player.y+1.2)*scale;
+  const bot=top+p.d*scale;
+  objects.push({z,l,r,top,bot,p,scale});
+ }
+ objects.sort((a,b)=>b.z-a.z);
+ for(const o of objects){
+  if(o.r<0||o.l>W)continue;
+  ctx.fillStyle='#7d858c';ctx.fillRect(o.l,o.top,o.r-o.l,o.bot-o.top);
+  ctx.fillStyle='#aab0b5';ctx.fillRect(o.l,o.top,o.r-o.l,Math.max(2,o.scale*0.12));
+  ctx.fillStyle='#343a40';ctx.fillRect(o.l,o.top,o.r-o.l,o.scale*.18);
+  ctx.strokeStyle='#111';ctx.strokeRect(o.l,o.top,o.r-o.l,o.bot-o.top);
+ }
+ // speed lines
+ const sp=Math.hypot(player.vx,player.vz);
+ if(sp>10){ctx.globalAlpha=Math.min(.25,(sp-10)/40);ctx.strokeStyle='#fff';for(let i=0;i<10;i++){let x=W/2+(Math.random()-.5)*W;ctx.beginPath();ctx.moveTo(W/2+(x-W/2)*.2,H/2);ctx.lineTo(x,H/2+(Math.random()-.5)*H);ctx.stroke()}ctx.globalAlpha=1}
+ const speed=Math.round(sp*20);
+ document.getElementById('speed').textContent=speed+' u/s';
+ document.getElementById('timer').textContent=running?((performance.now()-startTime)/1000).toFixed(2):'0.00';
+ document.getElementById('best').textContent=best?'BEST '+best.toFixed(2)+'s':'';
+}
+let last=performance.now();
+function loop(now){const dt=Math.min(.033,(now-last)/1000);last=now;update(dt);draw();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
